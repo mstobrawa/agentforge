@@ -1,0 +1,8 @@
+node_modules/
+dist/
+agentforge-report.json
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example

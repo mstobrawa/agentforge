@@ -1,0 +1,18 @@
+{
+  "name": "agentforge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node dist/test/orchestrator.test.js && node dist/test/cli.test.js && node dist/test/sandbox-runner.test.js && node dist/test/sandbox-verifier.test.js && node dist/test/orchestrator-sandbox-verifier.test.js && node dist/test/file-changes.test.js && node dist/test/openai-agent-adapter.test.js && node dist/test/workspace-context.test.js && node dist/test/agent-context-flow.test.js && node dist/test/openai-api-transport.test.js",
+    "start": "node dist/src/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "openai": "^7.45.0"
+  }
+}
