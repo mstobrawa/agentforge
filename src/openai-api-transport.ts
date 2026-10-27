@@ -1,5 +1,8 @@
 import OpenAI from "openai";
-import { OpenAIAgentAdapter, type OpenAIAgentTransport } from "./openai-agent-adapter.js";
+import {
+  OpenAIAgentAdapter,
+  type OpenAIAgentTransport,
+} from "./openai-agent-adapter.js";
 import type { AgentAdapter } from "./types.js";
 
 const proposalSchema = {
@@ -30,12 +33,20 @@ export class OpenAIResponsesTransport implements OpenAIAgentTransport {
     private readonly model: string,
   ) {}
 
-  async proposeFileChanges(input: Parameters<OpenAIAgentTransport["proposeFileChanges"]>[0]): Promise<unknown> {
+  async proposeFileChanges(
+    input: Parameters<OpenAIAgentTransport["proposeFileChanges"]>[0],
+  ): Promise<unknown> {
     let output: string;
     try {
       const response = await this.client.responses.create({
         model: this.model,
-        instructions: "Return a JSON file change proposal matching the required schema. Use only create or replace operations and normalized workspace-relative paths.",
+        instructions: [
+          "Return a JSON file change proposal matching the required schema.",
+          "Use only create or replace operations and normalized workspace-relative paths.",
+          "Complete the requested task using the provided workspace context.",
+          "If previousFailure is provided, treat it as feedback from the previous verification attempt, identify the cause, and propose a correction.",
+          "Do not claim that verification passed; return only the proposed file changes.",
+        ].join(" "),
         input: JSON.stringify(input),
         text: {
           format: {
@@ -65,9 +76,11 @@ export function createOpenAITransport(
   client?: Pick<OpenAI, "responses">,
 ): OpenAIResponsesTransport {
   const apiKey = environment.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("OPENAI_API_KEY is required to use the OpenAI API.");
+  if (!apiKey)
+    throw new Error("OPENAI_API_KEY is required to use the OpenAI API.");
   const model = environment.OPENAI_MODEL?.trim();
-  if (!model) throw new Error("OPENAI_MODEL is required to use the OpenAI API.");
+  if (!model)
+    throw new Error("OPENAI_MODEL is required to use the OpenAI API.");
 
   return new OpenAIResponsesTransport(client ?? new OpenAI({ apiKey }), model);
 }
@@ -78,5 +91,9 @@ export function createOpenAIAgentAdapter(
   environment: NodeJS.ProcessEnv = process.env,
   client?: Pick<OpenAI, "responses">,
 ): AgentAdapter {
-  return new OpenAIAgentAdapter(workspacePath, createOpenAITransport(environment, client), contextPaths);
+  return new OpenAIAgentAdapter(
+    workspacePath,
+    createOpenAITransport(environment, client),
+    contextPaths,
+  );
 }

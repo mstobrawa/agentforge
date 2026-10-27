@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type OpenAI from "openai";
 import test from "node:test";
-import { createOpenAIAgentAdapter, createOpenAITransport, OpenAIResponsesTransport } from "../src/openai-api-transport.js";
+import {
+  createOpenAIAgentAdapter,
+  createOpenAITransport,
+  OpenAIResponsesTransport,
+} from "../src/openai-api-transport.js";
 
 test("requires OPENAI_API_KEY and OPENAI_MODEL without exposing configuration values", () => {
   assert.throws(() => createOpenAITransport({}), /OPENAI_API_KEY is required/);
@@ -16,7 +26,9 @@ test("requires OPENAI_API_KEY and OPENAI_MODEL without exposing configuration va
 
 test("sends task and context through the Responses API and parses the proposal", async () => {
   let request: unknown;
-  const expected = { changes: [{ operation: "create", path: "answer.txt", content: "ok" }] };
+  const expected = {
+    changes: [{ operation: "create", path: "answer.txt", content: "ok" }],
+  };
   const client = {
     responses: {
       async create(input: unknown) {
@@ -29,16 +41,28 @@ test("sends task and context through the Responses API and parses the proposal",
   const transport = new OpenAIResponsesTransport(client, "model-from-test-env");
   const result = await transport.proposeFileChanges({
     task: "Add answer",
-    context: { files: [{ path: "input.txt", content: "source" }], totalBytes: 6 },
+    context: {
+      files: [{ path: "input.txt", content: "source" }],
+      totalBytes: 6,
+    },
   });
 
   assert.deepEqual(result, expected);
   assert.deepEqual(request, {
     model: "model-from-test-env",
-    instructions: "Return a JSON file change proposal matching the required schema. Use only create or replace operations and normalized workspace-relative paths.",
+    instructions: [
+      "Return a JSON file change proposal matching the required schema.",
+      "Use only create or replace operations and normalized workspace-relative paths.",
+      "Complete the requested task using the provided workspace context.",
+      "If previousFailure is provided, treat it as feedback from the previous verification attempt, identify the cause, and propose a correction.",
+      "Do not claim that verification passed; return only the proposed file changes.",
+    ].join(" "),
     input: JSON.stringify({
       task: "Add answer",
-      context: { files: [{ path: "input.txt", content: "source" }], totalBytes: 6 },
+      context: {
+        files: [{ path: "input.txt", content: "source" }],
+        totalBytes: 6,
+      },
     }),
     text: {
       format: {
@@ -72,26 +96,50 @@ test("sends task and context through the Responses API and parses the proposal",
 
 test("returns concise errors for API and malformed JSON failures", async () => {
   const failingClient = {
-    responses: { async create() { throw new Error("secret-bearing provider detail"); } },
+    responses: {
+      async create() {
+        throw new Error("secret-bearing provider detail");
+      },
+    },
   } as unknown as Pick<OpenAI, "responses">;
-  const apiTransport = new OpenAIResponsesTransport(failingClient, "test-model");
+  const apiTransport = new OpenAIResponsesTransport(
+    failingClient,
+    "test-model",
+  );
   await assert.rejects(
-    apiTransport.proposeFileChanges({ task: "task", context: { files: [], totalBytes: 0 } }),
-    (error: Error) => error.message === "OpenAI API request failed." && !error.message.includes("secret-bearing"),
+    apiTransport.proposeFileChanges({
+      task: "task",
+      context: { files: [], totalBytes: 0 },
+    }),
+    (error: Error) =>
+      error.message === "OpenAI API request failed." &&
+      !error.message.includes("secret-bearing"),
   );
 
   const malformedClient = {
-    responses: { async create() { return { output_text: "not JSON" }; } },
+    responses: {
+      async create() {
+        return { output_text: "not JSON" };
+      },
+    },
   } as unknown as Pick<OpenAI, "responses">;
-  const malformedTransport = new OpenAIResponsesTransport(malformedClient, "test-model");
+  const malformedTransport = new OpenAIResponsesTransport(
+    malformedClient,
+    "test-model",
+  );
   await assert.rejects(
-    malformedTransport.proposeFileChanges({ task: "task", context: { files: [], totalBytes: 0 } }),
+    malformedTransport.proposeFileChanges({
+      task: "task",
+      context: { files: [], totalBytes: 0 },
+    }),
     /invalid file change proposal/,
   );
 });
 
 test("factory adapter uses the OpenAI transport and applies only validated proposals", async () => {
-  const temporaryRoot = mkdtempSync(join(tmpdir(), "agentforge-openai-factory-"));
+  const temporaryRoot = mkdtempSync(
+    join(tmpdir(), "agentforge-openai-factory-"),
+  );
   const workspace = join(temporaryRoot, "workspace");
   mkdirSync(workspace);
   writeFileSync(join(workspace, "input.txt"), "before\n");
@@ -102,9 +150,26 @@ test("factory adapter uses the OpenAI transport and applies only validated propo
       async create(request: unknown) {
         requests.push(request);
         callCount += 1;
-        const proposal = callCount === 1
-          ? { changes: [{ operation: "replace", path: "input.txt", content: "after\n" }] }
-          : { changes: [{ operation: "create", path: "../outside.txt", content: "unsafe" }] };
+        const proposal =
+          callCount === 1
+            ? {
+                changes: [
+                  {
+                    operation: "replace",
+                    path: "input.txt",
+                    content: "after\n",
+                  },
+                ],
+              }
+            : {
+                changes: [
+                  {
+                    operation: "create",
+                    path: "../outside.txt",
+                    content: "unsafe",
+                  },
+                ],
+              };
         return { output_text: JSON.stringify(proposal) };
       },
     },
@@ -125,9 +190,15 @@ test("factory adapter uses the OpenAI transport and applies only validated propo
     assert.match(request.input, /Update this file/);
     assert.match(request.input, /before\\n/);
 
-    await assert.rejects(adapter.implement("Try an unsafe path"), /normalized relative path/);
+    await assert.rejects(
+      adapter.implement("Try an unsafe path"),
+      /normalized relative path/,
+    );
     assert.equal(readFileSync(join(workspace, "input.txt"), "utf8"), "after\n");
-    assert.throws(() => readFileSync(join(temporaryRoot, "outside.txt"), "utf8"), { code: "ENOENT" });
+    assert.throws(
+      () => readFileSync(join(temporaryRoot, "outside.txt"), "utf8"),
+      { code: "ENOENT" },
+    );
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
