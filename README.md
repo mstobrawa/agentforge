@@ -85,13 +85,19 @@ These safeguards reduce risk but do not guarantee complete isolation or eliminat
 
 ## Current status
 
-The first end-to-end smoke test has successfully used the OpenAI API to propose a file change and pass sandbox verification.
+AgentForge has successfully completed two real end-to-end demonstrations using the OpenAI API:
 
-The project remains an early-stage prototype. Repair behavior and broader real-world coding tasks need further validation.
+- **Smoke test:** the agent proposed a file change that passed Docker-based verification.
+
+- **Repair demo:** the initial implementation failed verification. The failure feedback was passed back to the agent, which produced a correction that passed verification on the second attempt.
+
+The repair demo completed in approximately 6 seconds and required two attempts. This demonstrates one successful repair cycle, not general reliability across arbitrary coding tasks.
+
+AgentForge remains an early-stage prototype. Broader real-world tasks, multi-file changes, and additional security controls require further validation.
 
 ## Roadmap
 
-- [ ] Validate a complete repair cycle after a deliberately failing check
+- [x] Validate a complete repair cycle after a deliberately failing check
 - [ ] Test changes across multiple related source files
 - [ ] Improve diagnostics and reporting
 - [ ] Add documented example tasks and sample reports
