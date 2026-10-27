@@ -24,6 +24,7 @@ AgentForge is an experimental TypeScript project exploring AI-assisted software 
 - Bounded retry workflow
 - Unit and integration tests
 - CLI smoke test using the real OpenAI API
+- CLI repair demo using the real OpenAI API
 
 ## Requirements
 
@@ -67,6 +68,14 @@ npm start -- --openai-smoke
 ```
 
 The smoke test makes a real API request, creates a temporary workspace, proposes a file change, and verifies the result in Docker. It may incur API charges. ChatGPT subscriptions and API billing are separate.
+
+Run the repair demo:
+
+```bash
+npm start -- --openai-repair-demo
+```
+
+Optionally save its report with `npm start -- --openai-repair-demo --report ./repair-demo-report.json`. The demo creates a temporary workspace with an intentionally incorrect text file and a content check, then uses the Orchestrator's bounded repair workflow. It reports a successful demo only when verification fails and then passes after a repair. The temporary workspace is removed after the run. This mode makes real API requests and may incur API charges; it makes no requests beyond the Orchestrator's initial attempt and its maximum of two repairs.
 
 ## Security
 

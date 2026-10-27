@@ -29,6 +29,17 @@ const OPENAI_SMOKE_CHECK: ProjectCheck = Object.freeze({
     "const fs = require('node:fs'); if (fs.readFileSync('hello.txt', 'utf8') !== 'Hello from AgentForge.' + String.fromCharCode(10)) process.exit(1);",
   ]),
 });
+const REPAIR_DEMO_TASK = "Demonstrate one repair cycle for answer.txt. On your first implementation, keep the answer incorrect so the verifier reports a failure. When previous verification feedback is provided, replace answer.txt with exactly `AgentForge repair OK.` followed by one LF.";
+const REPAIR_DEMO_CHECK_SOURCE = [
+  "import { readFileSync } from 'node:fs';",
+  "const expected = 'AgentForge repair OK.' + String.fromCharCode(10);",
+  "if (readFileSync('answer.txt', 'utf8') !== expected) process.exit(1);",
+  "",
+].join("\n");
+const REPAIR_DEMO_CHECK: ProjectCheck = Object.freeze({
+  image: "node:24-alpine",
+  command: Object.freeze(["node", "check.mjs"]),
+});
 
 export type SandboxRunnerFactory = (stagingRoot: string) => Pick<SandboxRunner, "run">;
 export type OpenAIAgentFactory = (workspacePath: string, contextPaths: readonly string[]) => AgentAdapter;
@@ -46,12 +57,15 @@ export async function runCli(
     return {
       exitCode: 2,
       stdout: "",
-      stderr: 'Usage: agentforge "task description" --staging-root <path> --workspace <path> [--report <path>]\n       agentforge --openai-smoke [--report <path>]\n',
+      stderr: 'Usage: agentforge "task description" --staging-root <path> --workspace <path> [--report <path>]\n       agentforge --openai-smoke [--report <path>]\n       agentforge --openai-repair-demo [--report <path>]\n',
     };
   }
 
   if (parsed.mode === "openai-smoke") {
     return runOpenAISmoke(parsed.reportPath, saveReport, createSandboxRunner, createOpenAIAgent);
+  }
+  if (parsed.mode === "openai-repair-demo") {
+    return runOpenAIRepairDemo(parsed.reportPath, saveReport, createSandboxRunner, createOpenAIAgent);
   }
 
   let workflowReport;
@@ -95,13 +109,15 @@ async function main(): Promise<void> {
 
 type ParsedArgs =
   | { mode: "verify"; task: string; stagingRoot: string; workspacePath: string; reportPath?: string }
-  | { mode: "openai-smoke"; reportPath?: string };
+  | { mode: "openai-smoke"; reportPath?: string }
+  | { mode: "openai-repair-demo"; reportPath?: string };
 
 function parseArgs(args: string[]): ParsedArgs | undefined {
-  if (args[0] === "--openai-smoke") {
-    if (args.length === 1) return { mode: "openai-smoke" };
+  if (args[0] === "--openai-smoke" || args[0] === "--openai-repair-demo") {
+    const mode = args[0] === "--openai-smoke" ? "openai-smoke" : "openai-repair-demo";
+    if (args.length === 1) return { mode };
     if (args.length === 3 && args[1] === "--report" && args[2] && !args[2].startsWith("-")) {
-      return { mode: "openai-smoke", reportPath: args[2] };
+      return { mode, reportPath: args[2] };
     }
     return undefined;
   }
@@ -141,6 +157,59 @@ function parseArgs(args: string[]): ParsedArgs | undefined {
   return reportPath === undefined
     ? { mode: "verify", task, stagingRoot, workspacePath }
     : { mode: "verify", task, stagingRoot, workspacePath, reportPath };
+}
+
+async function runOpenAIRepairDemo(
+  reportPath: string | undefined,
+  saveReport: (path: string, json: string) => Promise<void>,
+  createSandboxRunner: SandboxRunnerFactory,
+  createOpenAIAgent: OpenAIAgentFactory,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  let stagingRoot: string | undefined;
+  try {
+    stagingRoot = await mkdtemp(join(tmpdir(), "agentforge-openai-repair-demo-"));
+    const workspacePath = join(stagingRoot, "workspace");
+    await mkdir(workspacePath);
+    await writeFile(join(workspacePath, "answer.txt"), "Needs repair.\n", "utf8");
+    await writeFile(join(workspacePath, "check.mjs"), REPAIR_DEMO_CHECK_SOURCE, "utf8");
+
+    const verifier = new SandboxVerifier(createSandboxRunner(stagingRoot), {
+      workspacePath,
+      checks: [REPAIR_DEMO_CHECK],
+    });
+    const workflowReport = await new Orchestrator(
+      createOpenAIAgent(workspacePath, ["answer.txt", "check.mjs"]),
+      verifier,
+    ).run(REPAIR_DEMO_TASK);
+    const repairDemonstrated = workflowReport.attempts >= 2
+      && workflowReport.stateHistory.includes("repairing")
+      && workflowReport.verificationResults[0]?.passed === false
+      && workflowReport.verificationResults.at(-1)?.passed === true;
+    const succeeded = workflowReport.status === "succeeded" && repairDemonstrated;
+    const json = `${JSON.stringify({
+      ...workflowReport,
+      status: succeeded ? "succeeded" : "failed",
+      execution: "openai_repair_demo",
+      repairDemo: { demonstrated: repairDemonstrated },
+    }, null, 2)}\n`;
+
+    if (reportPath) {
+      try {
+        await saveReport(reportPath, json);
+      } catch {
+        return { exitCode: 1, stdout: "", stderr: "Unable to write the report file.\n" };
+      }
+    }
+    return { exitCode: succeeded ? 0 : 1, stdout: json, stderr: "" };
+  } catch {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: "Unable to run the OpenAI repair demo. Check OPENAI_API_KEY, OPENAI_MODEL, and Docker configuration.\n",
+    };
+  } finally {
+    if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true });
+  }
 }
 
 async function runOpenAISmoke(

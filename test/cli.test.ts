@@ -35,6 +35,8 @@ test("rejects missing, blank, and malformed CLI arguments", async () => {
     ["Task", "--staging-root", "/staging", "--workspace"],
     ["Task", ...stagingArgs, "--workspace", "/staging/other"],
     ["--openai-smoke", "unexpected-task"],
+    ["--openai-repair-demo", "unexpected-task"],
+    ["--openai-repair-demo", "--report", "--invalid"],
   ];
 
   for (const args of invalidArgs) {
@@ -43,6 +45,78 @@ test("rejects missing, blank, and malformed CLI arguments", async () => {
     assert.match(result.stderr, /Usage:/);
     assert.equal(result.stdout, "");
   }
+});
+
+test("OpenAI repair demo parses --report and reports an actual mocked repair cycle", async () => {
+  let stagingRoot = "";
+  let workspacePath = "";
+  let verificationCalls = 0;
+  let savedReport: { path: string; json: string } | undefined;
+  const requests: Parameters<OpenAIAgentTransport["proposeFileChanges"]>[0][] = [];
+
+  const result = await runCli(["--openai-repair-demo", "--report", "repair.json"], async (path, json) => {
+    savedReport = { path, json };
+  }, (root) => {
+    stagingRoot = root;
+    return {
+      async run(workspace, check) {
+        workspacePath = workspace;
+        assert.equal(dirname(workspace), root);
+        assert.equal(check.image, "node:24-alpine");
+        assert.deepEqual(check.command, ["node", "check.mjs"]);
+        assert.match(readFileSync(join(workspace, "check.mjs"), "utf8"), /String\.fromCharCode\(10\)/);
+        const passed = readFileSync(join(workspace, "answer.txt"), "utf8") === "AgentForge repair OK.\n";
+        verificationCalls += 1;
+        return sandboxResult({
+          status: passed ? "success" : "error",
+          exitCode: passed ? 0 : 1,
+          stdout: passed ? "Repair check passed." : "answer.txt does not match the expected content.",
+          stderr: "",
+        });
+      },
+    };
+  }, (workspace, contextPaths) => {
+    assert.deepEqual(contextPaths, ["answer.txt", "check.mjs"]);
+    assert.equal(readFileSync(join(workspace, "answer.txt"), "utf8"), "Needs repair.\n");
+    const transport: OpenAIAgentTransport = {
+      async proposeFileChanges(input) {
+        requests.push(input);
+        return {
+          changes: [{
+            operation: "replace",
+            path: "answer.txt",
+            content: requests.length === 1 ? "Still needs repair.\n" : "AgentForge repair OK.\n",
+          }],
+        };
+      },
+    };
+    return new OpenAIAgentAdapter(workspace, transport, contextPaths);
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(verificationCalls, 2);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1]?.context.files.find((file) => file.path === "answer.txt"), {
+    path: "answer.txt",
+    content: "Still needs repair.\n",
+  });
+  assert.match(requests[1]?.previousFailure ?? "", /does not match the expected content/);
+  const report = JSON.parse(result.stdout) as {
+    status: string;
+    attempts: number;
+    stateHistory: string[];
+    verificationResults: { passed: boolean }[];
+    repairDemo: { demonstrated: boolean };
+  };
+  assert.equal(report.status, "succeeded");
+  assert.equal(report.attempts, 2);
+  assert.ok(report.stateHistory.includes("repairing"));
+  assert.deepEqual(report.verificationResults.map((verification) => verification.passed), [false, true]);
+  assert.equal(report.repairDemo.demonstrated, true);
+  assert.equal(savedReport?.path, "repair.json");
+  assert.deepEqual(JSON.parse(savedReport?.json ?? "{}"), report);
+  assert.equal(existsSync(join(workspacePath, "answer.txt")), false);
+  assert.equal(existsSync(stagingRoot), false);
 });
 
 test("OpenAI smoke mode creates a temporary workspace and runs its sandbox verifier", async () => {
